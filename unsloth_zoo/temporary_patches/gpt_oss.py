@@ -28,6 +28,44 @@ from .utils import (
 )
 torch_cuda_device = torch.cuda.device
 
+@torch.compile(dynamic = True, fullgraph = True, options = torch_compile_options)
+def swiglu_torch_forward(a, alpha, limit):
+    a_gelu = a[..., ::2].to(torch.float32)
+    if limit is not None:
+        a_gelu = a_gelu.clamp(max=limit)
+    a_linear = a[..., 1::2].to(torch.float32)
+    if limit is not None:
+        a_linear = a_linear.clamp(min=-limit, max=limit)
+
+    out_gelu = a_gelu * torch.sigmoid(alpha * a_gelu)
+    out = out_gelu * (a_linear + 1)
+    return out.to(a.dtype)
+pass
+
+@torch.compile(dynamic = True, fullgraph = True, options = torch_compile_options)
+def swiglu_torch_backward(pre_act, alpha, limit, g1):
+    g, l = pre_act[..., ::2].to(torch.float32), pre_act[..., 1::2].to(torch.float32)
+
+    if limit is not None:
+        mask_g = g <= limit
+        mask_l = l.abs() <= limit
+        ḡ = torch.where(mask_g, g, limit)
+        l̄ = torch.where(mask_l, l, l.sign() * limit)
+    else:                                            # no clipping
+        mask_g = mask_l = torch.ones_like(g, dtype=bool)
+        ḡ, l̄ = g, l
+
+    σ   = torch.sigmoid(alpha * ḡ)
+    dg  = (σ + alpha * ḡ * σ * (1 - σ)) * (l̄ + 1)
+    dl  = ḡ * σ
+    dg  = torch.where(mask_g, dg, 0.)                # clamp-grad
+    dl  = torch.where(mask_l, dl, 0.)
+
+    grad = torch.empty_like(pre_act)
+    grad[..., ::2], grad[..., 1::2] = dg, dl
+    return g1 * grad.to(g1.dtype)
+pass
+
 
 def patch_gpt_oss():
     try:
@@ -92,6 +130,87 @@ def patch_gpt_oss():
         return w, w_scale
     patch_function(transformers.integrations.mxfp4, "swizzle_mxfp4", swizzle_mxfp4)
 
+    class Mxfp4GptOssExperts_Training(torch.autograd.Function):
+        @staticmethod
+        def forward(
+            ctx,
+            hidden_states,
+            self_class,
+            routing_data,
+            gather_idx,
+            scatter_idx,
+        ):
+            pre_activation = matmul_ogs(
+                hidden_states.to(torch.bfloat16), # tl.dot_scaled upcasts to BF16 for old hardware
+                self_class.gate_up_proj,
+                self_class.gate_up_proj_bias,
+                routing_data,
+                gather_indx=gather_idx,
+                scatter_indx=None,
+                precision_config=self_class.gate_up_proj_precision_config,
+                gammas=None,
+                fused_activation=None,
+            )
+            swiglu_output = swiglu_torch_forward(
+                pre_activation,
+                self_class.alpha,
+                getattr(self_class.gate_up_proj_precision_config, "limit", None),
+            )
+            out = matmul_ogs(
+                swiglu_output,
+                self_class.down_proj,
+                self_class.down_proj_bias,
+                routing_data,
+                gather_indx=None,
+                scatter_indx=scatter_idx,
+                precision_config=self_class.down_proj_precision_config,
+                gammas=routing_data.gate_scal,
+                fused_activation=None,
+            )
+            ctx.save_for_backward(
+                pre_activation,
+                routing_data.gate_scal,
+                gather_idx.src_indx,
+                gather_idx.dst_indx,
+                scatter_idx.src_indx,
+                scatter_idx.dst_indx,
+            )
+            ctx.self_class   = self_class
+            ctx.gather_idx   = gather_idx
+            ctx.scatter_idx  = scatter_idx
+            ctx.routing_data = routing_data
+            return out
+        pass
+
+        @staticmethod
+        def backward(ctx, grad_token):
+            raise NotImplementedError("Backwards pass using MXFP4 is still under construction!")
+            (pre_act, gamma, gather_src, gather_dst, scatter_src, scatter_dst,) = ctx.saved_tensors
+            self_class = ctx.self_class
+            limit = getattr(self_class.down_proj, "limit", None)
+            alpha = self_class.alpha
+
+            # 1) token ➜ expert (reverse of forward scatter)
+            grad_exp = grad_token.index_select(0, scatter_src)
+            grad_exp.mul_(gamma.unsqueeze(-1))
+            # 2) grad_exp · Wdᵀ (reuse forward GEMM kernel)
+            Wd_T = ctx.self_class.down_proj.data.swapaxes(1, 2).transpose(1, 2).contiguous().transpose(1, 2) # (E, d_model, d_ff)
+            g1   = matmul_ogs(grad_exp, Wd_T, None, ctx.routing_data, gather_indx=ctx.scatter_idx)
+            del Wd_T
+            # 3) activation derivative
+            g1 = swiglu_torch_backward(pre_act, alpha, limit, g1)
+            # 4) g1 · Wuᵀ  
+            Wu_T = ctx.self_class.gate_up_proj.data.swapaxes(1, 2).transpose(1, 2).contiguous().transpose(1, 2) # (E, 2*d_ff, d_model)
+            dx_exp = matmul_ogs(g1, Wu_T, None, ctx.routing_data, scatter_indx=ctx.gather_idx)
+            del Wu_T
+
+            # 5) expert ➜ token (reverse of forward gather)
+            dx_token = torch.zeros_like(grad_token)
+            dx_token.index_add_(0, gather_dst, dx_exp)
+            return (dx_token, None, None, None, None,)
+        pass
+    pass
+
     class Mxfp4GptOssExperts(nn.Module):
         def __init__(self, config):
             super().__init__()
@@ -132,25 +251,34 @@ def patch_gpt_oss():
             with torch_cuda_device(hidden_states.device):
                 if not hasattr(self, "act"):
                     self.act = FusedActivation(FnSpecs("swiglu", swiglu_fn, ("alpha", "limit")), (self.alpha, None), 2)
-                intermediate_cache1 = matmul_ogs(
-                    hidden_states.to(torch.bfloat16),
-                    self.gate_up_proj,
-                    self.gate_up_proj_bias,
-                    routing_data,
-                    gather_indx=gather_idx,
-                    precision_config=self.gate_up_proj_precision_config,
-                    gammas=None,
-                    fused_activation=self.act,
-                )
-                intermediate_cache3 = matmul_ogs(
-                    intermediate_cache1,
-                    self.down_proj,
-                    self.down_proj_bias,
-                    routing_data,
-                    scatter_indx=scatter_idx,
-                    precision_config=self.down_proj_precision_config,
-                    gammas=routing_data.gate_scal,
-                )
+                if not hidden_states.requires_grad:
+                    intermediate_cache1 = matmul_ogs(
+                        hidden_states.to(torch.bfloat16), # tl.dot_scaled upcasts to BF16 for old hardware
+                        self.gate_up_proj,
+                        self.gate_up_proj_bias,
+                        routing_data,
+                        gather_indx=gather_idx,
+                        precision_config=self.gate_up_proj_precision_config,
+                        gammas=None,
+                        fused_activation=self.act,
+                    )
+                    intermediate_cache3 = matmul_ogs(
+                        intermediate_cache1,
+                        self.down_proj,
+                        self.down_proj_bias,
+                        routing_data,
+                        scatter_indx=scatter_idx,
+                        precision_config=self.down_proj_precision_config,
+                        gammas=routing_data.gate_scal,
+                    )
+                else:
+                    intermediate_cache3 = Mxfp4GptOssExperts_Training.apply(
+                        hidden_states,
+                        self,
+                        routing_data,
+                        gather_idx,
+                        scatter_idx,
+                    )
             return intermediate_cache3
         pass
     patch_function(transformers.integrations.mxfp4, "Mxfp4GptOssExperts", Mxfp4GptOssExperts)
@@ -320,9 +448,9 @@ class GptOssExperts(nn.Module):
         batch_size = hidden_states.shape[0]
         hidden_states = hidden_states.reshape(-1, self.hidden_size)
         num_experts = routing_weights.shape[1]
-
+        final_dtype = torch.float32 if hidden_states.dtype == torch.float16 else torch.bfloat16
         if self.training:
-            next_states = torch.zeros_like(hidden_states, dtype=hidden_states.dtype, device=hidden_states.device)
+            next_states = torch.zeros_like(hidden_states, dtype=torch.float32, device=hidden_states.device)
             with torch.no_grad():
                 expert_mask = torch.nn.functional.one_hot(router_indices, num_classes=num_experts)
                 expert_mask = expert_mask.permute(2, 1, 0)
@@ -332,31 +460,33 @@ class GptOssExperts(nn.Module):
                     _, token_idx = torch.where(expert_mask[expert_idx[0]])
                 current_state = hidden_states[token_idx]
                 gate_up = self.gate_up_projs[expert_idx](current_state)
-                gate, up = gate_up[..., ::2], gate_up[..., 1::2]
-                gate = gate.clamp(min=None, max=self.limit)
-                up = up.clamp(min=-self.limit, max=self.limit)
-                glu = gate * torch.sigmoid(gate * self.alpha)
-                gated_output = (up + 1) * glu
-                out = self.down_projs[expert_idx](gated_output)
-                weighted_output = out * routing_weights[token_idx, expert_idx, None]
-                next_states.index_add_(0, token_idx, weighted_output.to(hidden_states.dtype))
+                gated_output = swiglu_torch_forward(gate_up.to(torch.float32), self.alpha, self.limit)
+                # gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+                # gate = gate.clamp(min=None, max=self.limit)
+                # up = up.clamp(min=-self.limit, max=self.limit)
+                # glu = gate * torch.sigmoid(gate * self.alpha)
+                # gated_output = (up + 1) * glu
+                out = self.down_projs[expert_idx](gated_output).to(torch.float32)
+                weighted_output = out * routing_weights[token_idx, expert_idx, None].to(torch.float32)
+                next_states.index_add_(0, token_idx, weighted_output)
             next_states = next_states.view(batch_size, -1, self.hidden_size)
-            return next_states
+            return next_states.to(final_dtype)
         else:
             X_rep = hidden_states.unsqueeze(0).expand(num_experts, -1, -1)
             gate_up_list = [up_l(X_rep[e]) for e, up_l in enumerate(self.gate_up_projs)]
             gate_up = torch.stack(gate_up_list, dim=0)
-            gate = gate_up[..., ::2]
-            up_h = gate_up[..., 1::2]
-            gate = gate.clamp(max=self.limit)
-            up_h = up_h.clamp(min=-self.limit, max=self.limit)
-            glu = gate * torch.sigmoid(gate * self.alpha)
-            fused = (up_h + 1) * glu
+            fused = swiglu_torch_forward(gate_up.to(torch.float32), self.alpha, self.limit)
+            # gate = gate_up[..., ::2]
+            # up_h = gate_up[..., 1::2]
+            # gate = gate.clamp(max=self.limit)
+            # up_h = up_h.clamp(min=-self.limit, max=self.limit)
+            # glu = gate * torch.sigmoid(gate * self.alpha)
+            # fused = (up_h + 1) * glu
             out_list = [down_l(fused[e]) for e, down_l in enumerate(self.down_projs)]
             outs = torch.stack(out_list, dim=0)
             rw = routing_weights.transpose(0, 1).unsqueeze(-1)
-            mixed = (outs * rw).sum(dim=0)
-            return mixed.view(batch_size, -1, self.hidden_size)
+            mixed = (outs.to(torch.float32) * rw.to(torch.float32)).sum(dim=0)
+            return mixed.view(batch_size, -1, self.hidden_size).to(final_dtype)
 pass
 
 class GptOssTopKRouter(nn.Module):
@@ -372,7 +502,7 @@ class GptOssTopKRouter(nn.Module):
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
         router_logits = self.linear(hidden_states)  # (batch_size * seq_len, num_experts)
         router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-        router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=router_top_value.dtype)
+        router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=torch.float32).to(router_logits.dtype)
         router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
         return router_scores, router_indices
 pass
@@ -390,11 +520,6 @@ class GptOssMLP(nn.Module):
 pass
 
 def patch_gpt_oss_linearized():
-    model_name = os.environ.get("UNSLOTH_MODEL_NAME", "")
-    if "gpt-oss" in model_name and model_name.endswith("-unsloth-bnb-4bit"):
-        pass
-    else:
-        return
     try:
         import transformers.models.gpt_oss.modeling_gpt_oss
     except Exception as e:
@@ -405,3 +530,109 @@ def patch_gpt_oss_linearized():
     return
 pass
 TEMPORARY_PATCHES.append(patch_gpt_oss_linearized)
+
+
+try:
+    from openai_harmony import (
+        Author,
+        Conversation,
+        DeveloperContent,
+        HarmonyEncodingName,
+        Message,
+        Role,
+        SystemContent,
+        ToolDescription,
+        load_harmony_encoding,
+        ReasoningEffort
+    )
+    encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+except:
+    pass
+def encode_conversations_with_harmony(
+    messages,
+    reasoning_effort = "medium",
+    add_generation_prompt = True,
+    tool_calls = None,
+    developer_instructions = None,
+    model_identity = "You are ChatGPT, a large language model trained by OpenAI.",
+):
+    try:
+        SystemContent
+    except:
+        raise ImportError("Please install openai_harmony via `pip install openai_harmony`")
+
+    assert reasoning_effort in ("low", "medium", "high")
+
+    match reasoning_effort:
+        case "low":    harmony_reasoning = ReasoningEffort.LOW
+        case "medium": harmony_reasoning = ReasoningEffort.MEDIUM
+        case "high":   harmony_reasoning = ReasoningEffort.HIGH
+
+    convos = []
+
+    # Create system message
+    import datetime
+    today = datetime.datetime.today().strftime("%Y-%m-%d")
+    system = Message.from_role_and_content(Role.SYSTEM,
+        SystemContent.new()
+            .with_model_identity(model_identity)
+            .with_reasoning_effort(harmony_reasoning)
+            .with_conversation_start_date(today)
+            .with_knowledge_cutoff("2024-06")
+            .with_required_channels(["analysis", "commentary", "final"])
+    )
+    convos.append(system)
+
+    # Developer message and tool calling
+    dev = DeveloperContent.new()
+    if developer_instructions is not None: dev = dev.with_instructions(developer_instructions)
+    if tool_calls is not None:
+        new_tools = []
+        for function in tool_calls:
+            function = function["function"]
+            name = function["name"]
+            description = function["description"]
+            parameters = function["parameters"]
+            tool = ToolDescription.new(name, description, parameters)
+            new_tools.append(tool)
+        dev = dev.with_function_tools(new_tools)
+    pass
+    if developer_instructions is not None or tool_calls is not None:
+        dev = Message.from_role_and_content(Role.DEVELOPER, dev)
+        convos.append(dev)
+
+    for message in messages:
+        if message["role"] == "user":
+            convos.append(
+                Message.from_role_and_content(Role.USER, message["content"])
+            )
+        elif message["role"] == "assistant":
+            if "thinking" in message:
+                x = Message.from_role_and_content(Role.ASSISTANT, message["content"])
+                x = x.with_channel("analysis")
+            elif "tool_calls" in message:
+                x = Message.from_role_and_content(Role.ASSISTANT, message['tool_calls'][0]["arguments"])
+                x = x.with_channel("commentary")\
+                     .with_recipient(f"functions.{message['tool_calls'][0]['name']}")\
+                     .with_content_type("json")
+            else:
+                x = Message.from_role_and_content(Role.ASSISTANT, message["content"])
+                x = x.with_channel("final")
+            convos.append(x)
+        elif message["role"] == "tool":
+            x = Message.from_author_and_content(
+                    Author.new(Role.TOOL, f"functions.{message['name']}"),
+                    message["content"],
+                ).with_recipient("assistant").with_channel("commentary")
+            convos.append(x)
+    pass
+
+    # Create Harmony conversations
+    convos = Conversation.from_messages(convos)
+    if add_generation_prompt:
+        harmony_input_ids = encoding.render_conversation_for_completion(convos, Role.ASSISTANT)
+    else:
+        harmony_input_ids = encoding.render_conversation(convos)
+    harmony_decoded_text = encoding.decode(harmony_input_ids)
+    return harmony_decoded_text, harmony_input_ids
+pass
