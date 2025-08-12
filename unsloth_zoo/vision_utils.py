@@ -568,18 +568,7 @@ pass
 
 import PIL.Image
 LANCZOS = PIL.Image.Resampling.LANCZOS
-
-# Handle both relative and absolute imports
-try:
-    from .dataset_utils import train_on_responses_only as _train_on_responses_only
-except ImportError:
-    try:
-        from dataset_utils import train_on_responses_only as _train_on_responses_only
-    except ImportError:
-        # If dataset_utils is not available, create a placeholder function
-        def _train_on_responses_only(*args, **kwargs):
-            raise ImportError("dataset_utils module not found. Please ensure it's in the same directory or install the unsloth package.")
-        pass
+from .dataset_utils import train_on_responses_only as _train_on_responses_only
 
 class UnslothVisionDataCollator:
     # All Unsloth Zoo code licensed under LGPLv3
