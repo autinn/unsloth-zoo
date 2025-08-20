@@ -429,8 +429,8 @@ FORCE_UNSLOTH_VIDEO_READER = os.getenv("FORCE_UNSLOTH_VIDEO_READER", None)
 
 @lru_cache(maxsize=1)
 def get_video_reader_backend() -> str:
-    if FORCE_QWENVL_VIDEO_READER is not None:
-        video_reader_backend = FORCE_QWENVL_VIDEO_READER
+    if FORCE_UNSLOTH_VIDEO_READER is not None:
+        video_reader_backend = FORCE_UNSLOTH_VIDEO_READER
     elif is_torchcodec_available():
         video_reader_backend = "torchcodec"
     elif is_decord_available():
