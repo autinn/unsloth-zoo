@@ -28,7 +28,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
+# from __future__ import annotations
 
 # print("do logging + yes futre")
 
@@ -89,11 +89,12 @@ from io import BytesIO
 from typing import Union, Tuple, List, Dict
 
 ###video###
-UNSLOTH_ENABLE_LOGGING = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
+# UNSLOTH_ENABLE_LOGGING = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
+from .temporary_patches.common import UNSLOTH_ENABLE_LOGGING
 
-logger = logging.getLogger(__name__)
-if UNSLOTH_ENABLE_LOGGING:
-    logger.setLevel(logging.DEBUG)
+# logger = logging.getLogger(__name__)
+# if UNSLOTH_ENABLE_LOGGING:
+#     logger.setLevel(logging.DEBUG)
 
 
 IMAGE_FACTOR = 28
