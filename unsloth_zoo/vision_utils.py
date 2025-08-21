@@ -435,7 +435,7 @@ def get_video_reader_backend() -> str:
     else:
         video_reader_backend = "torchvision"
     if UNSLOTH_ENABLE_LOGGING:
-        logger.info(f"Unsloth: unsloth_zoo/vision_utils using {video_reader_backend} to read video.", file=sys.stderr)
+        logger.info(f"Unsloth: unsloth_zoo/vision_utils using {video_reader_backend} to read video.")
     return video_reader_backend
 
 
