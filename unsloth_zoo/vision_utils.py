@@ -285,9 +285,12 @@ def _read_video_torchvision(
         pts_unit="sec",
         output_format="TCHW",
     )
+
     total_frames, video_fps = video.size(0), info["video_fps"]
+    
     if UNSLOTH_ENABLE_LOGGING:
         logger.info(f"Unsloth: torchvision:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
+    
     nframes = smart_nframes(ele, total_frames=total_frames, video_fps=video_fps)
     idx = torch.linspace(0, total_frames - 1, nframes).round().long()
     sample_fps = nframes / max(total_frames, 1e-6) * video_fps
