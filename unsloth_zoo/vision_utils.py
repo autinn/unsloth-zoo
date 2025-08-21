@@ -63,11 +63,8 @@ import time
 import sys 
 import warnings
 import os
-import logging
-import copy
 from functools import lru_cache
 
-logger = logging.getLogger(__name__)
 
 import requests
 import torchvision
@@ -75,7 +72,7 @@ from packaging import version
 from typing import Optional, Union, Tuple, List, Dict
 from torchvision import io, transforms
 from torchvision.transforms import InterpolationMode
-from .temporary_patches.common import UNSLOTH_ENABLE_LOGGING
+from .temporary_patches.common import UNSLOTH_ENABLE_LOGGING, logger
 
 IMAGE_FACTOR = 28
 MIN_PIXELS = 4 * 28 * 28
