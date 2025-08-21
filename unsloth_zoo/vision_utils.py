@@ -327,7 +327,7 @@ def calculate_video_frame_range(
         )
 
     if UNSLOTH_ENABLE_LOGGING:
-        logger.info(f"calculate video frame range: {start_frame=}, {end_frame=}, {total_frames=} from {video_start=}, {video_end=}, {video_fps=:.3f}")
+        logger.info(f"Unsloth: calculate video frame range: {start_frame=}, {end_frame=}, {total_frames=} from {video_start=}, {video_end=}, {video_fps=:.3f}")
     return start_frame, end_frame, end_frame - start_frame + 1
 
 
