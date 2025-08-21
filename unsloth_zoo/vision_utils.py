@@ -60,7 +60,6 @@ import base64
 from io import BytesIO
 import math
 import time
-import sys 
 import warnings
 import os
 from functools import lru_cache
@@ -69,7 +68,7 @@ from functools import lru_cache
 import requests
 import torchvision
 from packaging import version
-from typing import Optional, Union, Tuple, List, Dict
+from typing import Union, Tuple, List, Dict
 from torchvision import io, transforms
 from torchvision.transforms import InterpolationMode
 from .log import logger
