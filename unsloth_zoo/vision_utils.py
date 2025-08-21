@@ -1,3 +1,4 @@
+
 # Unsloth Zoo - Utilities for Unsloth
 # Copyright 2023-present Daniel Han-Chen, Michael Han-Chen & the Unsloth team. All rights reserved.
 #
@@ -27,8 +28,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
-#from __future__ import annotations
+print("do logging + yes futre")
 
 __all__ = [
     "process_vision_info",
@@ -57,6 +59,7 @@ IMAGE_TOKENS = [
 ]
 
 
+
 import base64
 import copy
 import logging
@@ -67,7 +70,7 @@ import time
 import warnings
 from functools import lru_cache
 from io import BytesIO
-from typing import Optional, Union, List, Dict, Tuple
+from typing import Optional, Union
 
 import requests
 import torch
@@ -77,6 +80,15 @@ from PIL import Image
 from torchvision import io, transforms
 from torchvision.transforms import InterpolationMode
 
+# import torch
+from PIL import Image
+# import base64
+from io import BytesIO
+# import math
+# import requests
+from typing import Union, Tuple, List, Dict
+
+###video###
 logger = logging.getLogger(__name__)
 
 IMAGE_FACTOR = 28
@@ -86,36 +98,41 @@ MAX_RATIO = 200
 
 VIDEO_MIN_PIXELS = 128 * 28 * 28
 VIDEO_MAX_PIXELS = 768 * 28 * 28
+VIDEO_TOTAL_PIXELS = 24576 * 28 * 28
 FRAME_FACTOR = 2
 FPS = 2.0
 FPS_MIN_FRAMES = 4
 FPS_MAX_FRAMES = 768
 
+###video###
+# Set the maximum number of video token inputs.
+# Here, 128K represents the maximum number of input tokens for the VLLM model.
+# Remember to adjust it according to your own configuration.
 VIDEO_TOTAL_PIXELS = int(float(os.environ.get('VIDEO_MAX_PIXELS', 128000 * 28 * 28 * 0.9)))
-do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-if do_logging:
-    logger.info(f"Unsloth: set VIDEO_TOTAL_PIXELS: {VIDEO_TOTAL_PIXELS}")
+# do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
 
+# if do_logging:
+    logger.info(f"Unsloth: set VIDEO_TOTAL_PIXELS: {VIDEO_TOTAL_PIXELS}")
 
 def round_by_factor(number: int, factor: int) -> int:
     """Returns the closest integer to 'number' that is divisible by 'factor'."""
     return round(number / factor) * factor
-
+pass
 
 def ceil_by_factor(number: int, factor: int) -> int:
     """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
     return math.ceil(number / factor) * factor
-
+pass
 
 def floor_by_factor(number: int, factor: int) -> int:
     """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
     return math.floor(number / factor) * factor
+pass
 
 
-#ensures images are resized to dimensions that are compatible with model requirements
 def smart_resize(
     height: int, width: int, factor: int = IMAGE_FACTOR, min_pixels: int = MIN_PIXELS, max_pixels: int = MAX_PIXELS
-) -> tuple[int, int]:
+) -> Tuple[int, int]:
     """
     Rescales the image so that the following conditions are met:
 
@@ -140,11 +157,11 @@ def smart_resize(
         h_bar = ceil_by_factor(height * beta, factor)
         w_bar = ceil_by_factor(width * beta, factor)
     return h_bar, w_bar
-
+pass
 
 
 def fetch_image(
-    ele: dict,
+    ele: Dict,
     size_factor: int = IMAGE_FACTOR,
 ) -> Image.Image:
     if "image" in ele:
@@ -153,6 +170,7 @@ def fetch_image(
         image = ele["image_url"]
         if isinstance(image, dict) and "url" in image:
             image = image["url"]
+    pass
     image_obj = None
     if isinstance(image, Image.Image):
         image_obj = image
@@ -170,7 +188,7 @@ def fetch_image(
     if image_obj is None:
         raise ValueError(f"Unrecognized image input, support local path, http url, base64 and PIL.Image, got {image}")
     image = image_obj.convert("RGB")
-    # resize
+    ## resize
     if "resized_height" in ele and "resized_width" in ele:
         resized_height, resized_width = smart_resize(
             ele["resized_height"],
@@ -189,9 +207,11 @@ def fetch_image(
             max_pixels=max_pixels,
         )
     image = image.resize((resized_width, resized_height))
+
     return image
+pass
 
-
+###video###
 def smart_nframes(
     ele: dict,
     total_frames: int,
@@ -224,9 +244,7 @@ def smart_nframes(
         max_frames = floor_by_factor(ele.get("max_frames", min(FPS_MAX_FRAMES, total_frames)), FRAME_FACTOR)
         nframes = total_frames / video_fps * fps
         if nframes > total_frames:
-            do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-            if do_logging:
-                logger.warning(f"Unsloth: smart_nframes: nframes[{nframes}] > total_frames[{total_frames}]")
+            logger.warning(f"Unsloth: smart_nframes: nframes[{nframes}] > total_frames[{total_frames}]")
         nframes = min(min(max(nframes, min_frames), max_frames), total_frames)
         nframes = floor_by_factor(nframes, FRAME_FACTOR)
     if not (FRAME_FACTOR <= nframes and nframes <= total_frames):
@@ -236,7 +254,7 @@ def smart_nframes(
 
 def _read_video_torchvision(
     ele: dict,
-) -> tuple[torch.Tensor, float]:
+) -> (torch.Tensor, float):
     """read video using torchvision.io.read_video
 
     Args:
@@ -263,9 +281,8 @@ def _read_video_torchvision(
         output_format="TCHW",
     )
     total_frames, video_fps = video.size(0), info["video_fps"]
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
-        logger.info(f"Unsloth: torchvision:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
+    # if do_logging:
+         logger.info(f"Unsloth: torchvision:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
     nframes = smart_nframes(ele, total_frames=total_frames, video_fps=video_fps)
     idx = torch.linspace(0, total_frames - 1, nframes).round().long()
     sample_fps = nframes / max(total_frames, 1e-6) * video_fps
@@ -277,6 +294,7 @@ def is_decord_available() -> bool:
     import importlib.util
 
     return importlib.util.find_spec("decord") is not None
+
 
 def calculate_video_frame_range(
     ele: dict,
@@ -331,15 +349,14 @@ def calculate_video_frame_range(
             f"exceeds end frame {end_frame} (at {video_end_clamped if video_end is not None else max_duration}s). "
             f"Video duration: {max_duration:.2f}s ({total_frames} frames @ {video_fps}fps)"
         )
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
-        logger.info(f"Unsloth: calculate video frame range: {start_frame=}, {end_frame=}, {total_frames=} from {video_start=}, {video_end=}, {video_fps=:.3f}")
+    # if do_logging:
+         logger.info(f"Unsloth: calculate video frame range: {start_frame=}, {end_frame=}, {total_frames=} from {video_start=}, {video_end=}, {video_fps=:.3f}")
     return start_frame, end_frame, end_frame - start_frame + 1
 
 
 def _read_video_decord(
     ele: dict,
-) -> tuple[torch.Tensor, float]:
+) -> (torch.Tensor, float):
     """read video using decord.VideoReader
 
     Args:
@@ -365,8 +382,7 @@ def _read_video_decord(
     idx = torch.linspace(start_frame, end_frame, nframes).round().long().tolist()
     video = vr.get_batch(idx).asnumpy()
     video = torch.tensor(video).permute(0, 3, 1, 2)  # Convert to TCHW format
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    # if do_logging:
         logger.info(f"Unsloth: decord:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
     sample_fps = nframes / max(total_frames, 1e-6) * video_fps
     return video, sample_fps
@@ -386,7 +402,7 @@ def is_torchcodec_available() -> bool:
 
 def _read_video_torchcodec(
     ele: dict,
-) -> tuple[torch.Tensor, float]:
+) -> (torch.Tensor, float):
     """read video using torchcodec.decoders.VideoDecoder
 
     Args:
@@ -400,8 +416,7 @@ def _read_video_torchcodec(
     """
     from torchcodec.decoders import VideoDecoder
     TORCHCODEC_NUM_THREADS = int(os.environ.get('TORCHCODEC_NUM_THREADS', 8))
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    # if do_logging:
         logger.info(f"Unsloth: set TORCHCODEC_NUM_THREADS: {TORCHCODEC_NUM_THREADS}")
     video_path = ele["video"]
     st = time.time()
@@ -417,10 +432,10 @@ def _read_video_torchcodec(
     idx = torch.linspace(start_frame, end_frame, nframes).round().long().tolist()
     sample_fps = nframes / max(total_frames, 1e-6) * video_fps
     video = decoder.get_frames_at(indices=idx).data
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    # if do_logging:
         logger.info(f"Unsloth: torchcodec:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
     return video, sample_fps
+
 
 VIDEO_READER_BACKENDS = {
     "decord": _read_video_decord,
@@ -441,24 +456,18 @@ def get_video_reader_backend() -> str:
         video_reader_backend = "decord"
     else:
         video_reader_backend = "torchvision"
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
-        print(f"Unsloth: unsloth_vision_utils using {video_reader_backend} to read video.", file=sys.stderr)
+    # if do_logging:    
+        logger.info(f"Unsloth: vision_utils using {video_reader_backend} to read video.", file=sys.stderr)
     return video_reader_backend
 
-def fetch_video(
-    ele: dict,
-    size_factor: int = IMAGE_FACTOR,
-    return_video_sample_fps: bool = False
-) -> Union[torch.Tensor, List[Image.Image]]:
+
+def fetch_video(ele: dict, image_factor: int = IMAGE_FACTOR, return_video_sample_fps: bool = False) -> Union[torch.Tensor, List[Image.Image]]:
     if isinstance(ele["video"], str):
         video_reader_backend = get_video_reader_backend()
         try:
             video, sample_fps = VIDEO_READER_BACKENDS[video_reader_backend](ele)
         except Exception as e:
-            do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-            if do_logging:
-                logger.warning(f"Unsloth: video_reader_backend {video_reader_backend} error, use torchvision as default, msg: {e}")
+            logger.warning(f"Unsloth: video_reader_backend {video_reader_backend} error, use torchvision as default, msg: {e}")
             video, sample_fps = VIDEO_READER_BACKENDS["torchvision"](ele)
 
         nframes, _, height, width = video.shape
@@ -467,21 +476,19 @@ def fetch_video(
         max_pixels = max(min(VIDEO_MAX_PIXELS, total_pixels / nframes * FRAME_FACTOR), int(min_pixels * 1.05))
         max_pixels_supposed = ele.get("max_pixels", max_pixels)
         if max_pixels_supposed > max_pixels:
-            do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-            if do_logging:
-                logger.warning(f"Unsloth: The given max_pixels[{max_pixels_supposed}] exceeds limit[{max_pixels}].")
+            logger.warning(f"Unsloth: The given max_pixels[{max_pixels_supposed}] exceeds limit[{max_pixels}].")
         max_pixels = min(max_pixels_supposed, max_pixels)
         if "resized_height" in ele and "resized_width" in ele:
             resized_height, resized_width = smart_resize(
                 ele["resized_height"],
                 ele["resized_width"],
-                factor=size_factor,
+                factor=image_factor,
             )
         else:
             resized_height, resized_width = smart_resize(
                 height,
                 width,
-                factor=size_factor,
+                factor=image_factor,
                 min_pixels=min_pixels,
                 max_pixels=max_pixels,
             )
@@ -500,7 +507,7 @@ def fetch_video(
         process_info.pop("type", None)
         process_info.pop("video", None)
         images = [
-            fetch_image({"image": video_element, **process_info}, size_factor=size_factor)
+            fetch_image({"image": video_element, **process_info}, size_factor=image_factor)
             for video_element in ele["video"]
         ]
         nframes = ceil_by_factor(len(images), FRAME_FACTOR)
@@ -509,8 +516,8 @@ def fetch_video(
         if return_video_sample_fps:
             return images, process_info.pop("fps", 2.0)
         return images
-    
-    
+
+
 def extract_vision_info(conversations: Union[List[Dict], List[List[Dict]]]) -> List[Dict]:
     vision_infos = []
     if isinstance(conversations[0], dict):
@@ -522,29 +529,48 @@ def extract_vision_info(conversations: Union[List[Dict], List[List[Dict]]]) -> L
                     if ele["type"] in ("image", "image_url", "video"):
                         vision_infos.append(ele)
     return vision_infos
+pass
 
 
+# def process_vision_info(
+#     conversations: Union[List[Dict], List[List[Dict]]],
+# ) -> Tuple[Union[List[Image.Image], None], Union[List[Union[torch.Tensor, List[Image.Image]]], None]]:
 
 def process_vision_info(
-    conversations: Union[List[Dict], List[List[Dict]]],
-) -> Tuple[Union[List[Image.Image], None], Union[List[Union[torch.Tensor, List[Image.Image]]], None]]:
+    conversations: Union[List[dict], List[List[dict]]],
+    return_video_kwargs: bool = False,
+) -> tuple[
+    Optional[List[Image.Image]],
+    Optional[List[Union[torch.Tensor, List[Image.Image]]]],
+    Optional[dict]
+]:
+
     vision_infos = extract_vision_info(conversations)
-    # Read images or videos
+    ## Read images or videos
     image_inputs = []
     video_inputs = []
+    video_sample_fps_list = []
+
     for vision_info in vision_infos:
         if "image" in vision_info or "image_url" in vision_info:
             image_inputs.append(fetch_image(vision_info))
         elif "video" in vision_info:
-            video_inputs.append(fetch_video(vision_info))
+            # video_inputs.append(fetch_video(vision_info))
+            video_input, video_sample_fps = fetch_video(vision_info, return_video_sample_fps=True)
+            video_sample_fps_list.append(video_sample_fps)
+            video_inputs.append(video_input)
         else:
             raise ValueError("image, image_url or video should in content.")
     if len(image_inputs) == 0:
         image_inputs = None
     if len(video_inputs) == 0:
         video_inputs = None
+    # return image_inputs, video_inputs
+    ###video###
+    if return_video_kwargs:
+      return image_inputs, video_inputs, {'fps': video_sample_fps_list}
     return image_inputs, video_inputs
-
+pass
 
 
 def get_padding_tokens_ids(tokenizer):
@@ -554,16 +580,18 @@ def get_padding_tokens_ids(tokenizer):
     image_tokens = IMAGE_TOKENS
     if hasattr(tokenizer, "image_token"):
         image_tokens = IMAGE_TOKENS + [tokenizer.image_token]
+    pass
 
     padding_token_ids = tokenizer.convert_tokens_to_ids(image_tokens)
     if hasattr(tokenizer, "pad_token_id"):
         padding_token_ids.append(tokenizer.pad_token_id)
+    pass
 
     padding_token_ids = list(x for x in padding_token_ids if x is not None)
     padding_token_ids = list(set(padding_token_ids))
     padding_token_ids = torch.IntTensor(padding_token_ids)
     return padding_token_ids
-
+pass
 
 
 def _get_dtype(dtype):
@@ -575,20 +603,18 @@ def _get_dtype(dtype):
         "bfloat16": torch.bfloat16,
         torch.bfloat16: torch.bfloat16,
     }
-    if dtype is None or dtype == None:
-        return None
-    elif dtype in __DTYPE_MAP:
-        return __DTYPE_MAP[dtype]
+    if   dtype is None or dtype == None: return None
+    elif dtype in __DTYPE_MAP: return __DTYPE_MAP[dtype]
     else:
-        do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-        if do_logging:
-            print(f"Unsloth: {dtype} is not recognized, so we'll default to None")
+        print(f"Unsloth: {dtype} is not recognized, so we'll default to None")
         return None
-
+    pass
+pass
 
 import PIL.Image
 LANCZOS = PIL.Image.Resampling.LANCZOS
 from .dataset_utils import train_on_responses_only as _train_on_responses_only
+###import dataset_utils from unsloth-zoo repo into environment to use in google colab###
 
 class UnslothVisionDataCollator:
     # All Unsloth Zoo code licensed under LGPLv3
@@ -632,9 +658,7 @@ class UnslothVisionDataCollator:
             try:
                 self.image_size = model.config.vision_config.image_size
             except:
-                do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-                if do_logging:
-                    print("Unsloth: Model does not have a default image size - using 512")
+                print("Unsloth: Model does not have a default image size - using 512")
                 self.image_size = 512
         elif resize == "max":
             self.image_size = None
@@ -692,13 +716,11 @@ class UnslothVisionDataCollator:
                     {"role": "assistant", "content": "How can I help you?"}
                 ])
                 self.assistant_single_content = True
-                do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-                if do_logging:
-                    print(
-                        f"Unsloth: {processor.__class__.__name__} only accepts 1 "\
-                        "text field for assistant roles!\n"\
-                        "We will auto fix the data collator to support it!"
-                    )
+                print(
+                    f"Unsloth: {processor.__class__.__name__} only accepts 1 "\
+                    "text field for assistant roles!\n"\
+                    "We will auto fix the data collator to support it!"
+                )
             except Exception as e:
                 raise RuntimeError(e)
         except Exception as e:
