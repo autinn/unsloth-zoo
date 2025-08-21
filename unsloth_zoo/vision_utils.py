@@ -72,7 +72,7 @@ from packaging import version
 from typing import Optional, Union, Tuple, List, Dict
 from torchvision import io, transforms
 from torchvision.transforms import InterpolationMode
-from ..log import logger
+from .log import logger
 from .temporary_patches.common import UNSLOTH_ENABLE_LOGGING
 
 IMAGE_FACTOR = 28
