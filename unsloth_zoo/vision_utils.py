@@ -92,9 +92,10 @@ from typing import Union, Tuple, List, Dict
 # UNSLOTH_ENABLE_LOGGING = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
 from .temporary_patches.common import UNSLOTH_ENABLE_LOGGING
 
-# logger = logging.getLogger(__name__)
-# if UNSLOTH_ENABLE_LOGGING:
-#     logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+if UNSLOTH_ENABLE_LOGGING:
+    logger.setLevel(logging.DEBUG)
 
 
 IMAGE_FACTOR = 28
