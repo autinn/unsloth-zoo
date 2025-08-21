@@ -354,7 +354,7 @@ def calculate_video_frame_range(
             f"exceeds end frame {end_frame} (at {video_end_clamped if video_end is not None else max_duration}s). "
             f"Video duration: {max_duration:.2f}s ({total_frames} frames @ {video_fps}fps)"
         )
-    if UNSLOTH_ENABLE_LOGGING:
+    # if UNSLOTH_ENABLE_LOGGING:
         logger.info(f"Unsloth: calculate video frame range: {start_frame=}, {end_frame=}, {total_frames=} from {video_start=}, {video_end=}, {video_fps=:.3f}")
     return start_frame, end_frame, end_frame - start_frame + 1
 
