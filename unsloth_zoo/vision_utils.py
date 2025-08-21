@@ -75,7 +75,7 @@ from PIL import Image
 from torchvision import io, transforms
 from torchvision.transforms import InterpolationMode
 
-logger = logging.getLogger(__name__)
+from .temporary_patches.common import UNSLOTH_ENABLE_LOGGING, logger
 
 IMAGE_FACTOR = 28
 MIN_PIXELS = 4 * 28 * 28
@@ -90,8 +90,7 @@ FPS_MIN_FRAMES = 4
 FPS_MAX_FRAMES = 768
 
 VIDEO_TOTAL_PIXELS = int(float(os.environ.get('VIDEO_MAX_PIXELS', 128000 * 28 * 28 * 0.9)))
-do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-if do_logging:
+if UNSLOTH_ENABLE_LOGGING:
     logger.info(f"Unsloth: set VIDEO_TOTAL_PIXELS: {VIDEO_TOTAL_PIXELS}")
 
 
@@ -222,8 +221,7 @@ def smart_nframes(
         max_frames = floor_by_factor(ele.get("max_frames", min(FPS_MAX_FRAMES, total_frames)), FRAME_FACTOR)
         nframes = total_frames / video_fps * fps
         if nframes > total_frames:
-            do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-            if do_logging:
+            if UNSLOTH_ENABLE_LOGGING:
                 logger.warning(f"Unsloth: smart_nframes: nframes[{nframes}] > total_frames[{total_frames}]")
         nframes = min(min(max(nframes, min_frames), max_frames), total_frames)
         nframes = floor_by_factor(nframes, FRAME_FACTOR)
@@ -261,8 +259,7 @@ def _read_video_torchvision(
         output_format="TCHW",
     )
     total_frames, video_fps = video.size(0), info["video_fps"]
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    if UNSLOTH_ENABLE_LOGGING:
         logger.info(f"Unsloth: torchvision:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
     nframes = smart_nframes(ele, total_frames=total_frames, video_fps=video_fps)
     idx = torch.linspace(0, total_frames - 1, nframes).round().long()
@@ -329,8 +326,7 @@ def calculate_video_frame_range(
             f"exceeds end frame {end_frame} (at {video_end_clamped if video_end is not None else max_duration}s). "
             f"Video duration: {max_duration:.2f}s ({total_frames} frames @ {video_fps}fps)"
         )
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    if UNSLOTH_ENABLE_LOGGING:
         logger.info(f"Unsloth: calculate video frame range: {start_frame=}, {end_frame=}, {total_frames=} from {video_start=}, {video_end=}, {video_fps=:.3f}")
     return start_frame, end_frame, end_frame - start_frame + 1
 
@@ -363,8 +359,7 @@ def _read_video_decord(
     idx = torch.linspace(start_frame, end_frame, nframes).round().long().tolist()
     video = vr.get_batch(idx).asnumpy()
     video = torch.tensor(video).permute(0, 3, 1, 2)  # Convert to TCHW format
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    if UNSLOTH_ENABLE_LOGGING:
         logger.info(f"Unsloth: decord:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
     sample_fps = nframes / max(total_frames, 1e-6) * video_fps
     return video, sample_fps
@@ -398,8 +393,7 @@ def _read_video_torchcodec(
     """
     from torchcodec.decoders import VideoDecoder
     TORCHCODEC_NUM_THREADS = int(os.environ.get('TORCHCODEC_NUM_THREADS', 8))
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    if UNSLOTH_ENABLE_LOGGING:
         logger.info(f"Unsloth: set TORCHCODEC_NUM_THREADS: {TORCHCODEC_NUM_THREADS}")
     video_path = ele["video"]
     st = time.time()
@@ -415,8 +409,7 @@ def _read_video_torchcodec(
     idx = torch.linspace(start_frame, end_frame, nframes).round().long().tolist()
     sample_fps = nframes / max(total_frames, 1e-6) * video_fps
     video = decoder.get_frames_at(indices=idx).data
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    if UNSLOTH_ENABLE_LOGGING:
         logger.info(f"Unsloth: torchcodec:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
     return video, sample_fps
 
@@ -439,8 +432,7 @@ def get_video_reader_backend() -> str:
         video_reader_backend = "decord"
     else:
         video_reader_backend = "torchvision"
-    do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-    if do_logging:
+    if UNSLOTH_ENABLE_LOGGING:
         print(f"Unsloth: unsloth_vision_utils using {video_reader_backend} to read video.", file=sys.stderr)
     return video_reader_backend
 
