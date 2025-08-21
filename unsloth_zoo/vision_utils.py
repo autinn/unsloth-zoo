@@ -53,11 +53,10 @@ IMAGE_TOKENS = [
     "<|IMG_LINE_BREAK|>", # Cohere
     "<|IMG_PATCH|>",      # Cohere
 ]
-#from __future__ import annotations
 
 import base64
 import copy
-import logging
+from .log import logger
 import math
 import os
 import sys
@@ -75,7 +74,7 @@ from PIL import Image
 from torchvision import io, transforms
 from torchvision.transforms import InterpolationMode
 
-from .temporary_patches.common import UNSLOTH_ENABLE_LOGGING, logger
+from .temporary_patches.common import UNSLOTH_ENABLE_LOGGING
 
 IMAGE_FACTOR = 28
 MIN_PIXELS = 4 * 28 * 28
@@ -446,8 +445,7 @@ def fetch_video(
         try:
             video, sample_fps = VIDEO_READER_BACKENDS[video_reader_backend](ele)
         except Exception as e:
-            do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-            if do_logging:
+            if UNSLOTH_ENABLE_LOGGING:
                 logger.warning(f"Unsloth: video_reader_backend {video_reader_backend} error, use torchvision as default, msg: {e}")
             video, sample_fps = VIDEO_READER_BACKENDS["torchvision"](ele)
 
@@ -457,8 +455,7 @@ def fetch_video(
         max_pixels = max(min(VIDEO_MAX_PIXELS, total_pixels / nframes * FRAME_FACTOR), int(min_pixels * 1.05))
         max_pixels_supposed = ele.get("max_pixels", max_pixels)
         if max_pixels_supposed > max_pixels:
-            do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-            if do_logging:
+            if UNSLOTH_ENABLE_LOGGING:
                 logger.warning(f"Unsloth: The given max_pixels[{max_pixels_supposed}] exceeds limit[{max_pixels}].")
         max_pixels = min(max_pixels_supposed, max_pixels)
         if "resized_height" in ele and "resized_width" in ele:
@@ -570,8 +567,7 @@ def _get_dtype(dtype):
     elif dtype in __DTYPE_MAP:
         return __DTYPE_MAP[dtype]
     else:
-        do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-        if do_logging:
+        if UNSLOTH_ENABLE_LOGGING:
             print(f"Unsloth: {dtype} is not recognized, so we'll default to None")
         return None
 
@@ -622,8 +618,7 @@ class UnslothVisionDataCollator:
             try:
                 self.image_size = model.config.vision_config.image_size
             except:
-                do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-                if do_logging:
+                if UNSLOTH_ENABLE_LOGGING:
                     print("Unsloth: Model does not have a default image size - using 512")
                 self.image_size = 512
         elif resize == "max":
@@ -682,8 +677,7 @@ class UnslothVisionDataCollator:
                     {"role": "assistant", "content": "How can I help you?"}
                 ])
                 self.assistant_single_content = True
-                do_logging = os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1"
-                if do_logging:
+                if UNSLOTH_ENABLE_LOGGING:
                     print(
                         f"Unsloth: {processor.__class__.__name__} only accepts 1 "\
                         "text field for assistant roles!\n"\
