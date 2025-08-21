@@ -457,7 +457,7 @@ def get_video_reader_backend() -> str:
     else:
         video_reader_backend = "torchvision"
     # if do_logging:    
-    logger.info(f"Unsloth: vision_utils using {video_reader_backend} to read video.", file=sys.stderr)
+    print(f"Unsloth: vision_utils using {video_reader_backend} to read video.", file=sys.stderr)
     return video_reader_backend
 
 
