@@ -287,6 +287,12 @@ def _read_video_torchvision(
     )
 
     total_frames, video_fps = video.size(0), info["video_fps"]
+
+    video_fps = info.get("video_fps", None) 
+    if video_fps is None:
+        logger.warning(f"Unsloth: torchvision: video_fps not found in info for {video_path}.")
+        # You can set a default value or raise an error
+        video_fps = ele.get("video_fps", 1.0)  # fallback to user-provided or default fps
     
     if UNSLOTH_ENABLE_LOGGING:
         logger.info(f"Unsloth: torchvision:  {video_path=}, {total_frames=}, {video_fps=}, time={time.time() - st:.3f}s")
